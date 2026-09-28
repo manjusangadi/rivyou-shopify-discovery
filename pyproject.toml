@@ -36,3 +36,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["."]
+
+[tool.pyright]
+include = ["src", "tests", "scripts", "run.py"]
+extraPaths = ["."]

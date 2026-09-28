@@ -83,6 +83,13 @@ CATEGORY_KEYWORDS = {
 }
 
 
+def _get_attr_str(tag, attr: str) -> str:
+    val = tag.get(attr, "")
+    if isinstance(val, list):
+        return str(val[0]).strip() if val else ""
+    return str(val or "").strip()
+
+
 class DataExtractor:
     """
     Extracts structured store attributes:
@@ -108,7 +115,7 @@ class DataExtractor:
             base_domain = parsed_base.netloc.lower()
 
             for a in soup.find_all("a", href=True):
-                href = a["href"].strip()
+                href = _get_attr_str(a, "href")
                 if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
                     continue
 
@@ -147,7 +154,7 @@ class DataExtractor:
 
                 # 1. mailto: links
                 for a in soup.find_all("a", href=True):
-                    href = a["href"].strip()
+                    href = _get_attr_str(a, "href")
                     if href.lower().startswith("mailto:"):
                         email_candidate = href.split(":", 1)[1].split("?")[0].strip()
                         if is_valid_email(email_candidate):
@@ -183,7 +190,7 @@ class DataExtractor:
 
                 # 1. tel: links
                 for a in soup.find_all("a", href=True):
-                    href = a["href"].strip()
+                    href = _get_attr_str(a, "href")
                     if href.lower().startswith("tel:"):
                         cand = href.split(":", 1)[1].split("?")[0].strip()
                         self._parse_and_add_phone(cand, found_phones)
@@ -231,7 +238,7 @@ class DataExtractor:
             try:
                 soup = BeautifulSoup(html, "lxml")
                 for a in soup.find_all("a", href=True):
-                    href = a["href"].strip()
+                    href = _get_attr_str(a, "href")
                     norm_social = normalize_social_url(href)
                     if norm_social:
                         found_socials.add(norm_social)

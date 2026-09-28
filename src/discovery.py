@@ -8,7 +8,7 @@ from typing import List, Set, Dict, Optional, Tuple, Any
 from bs4 import BeautifulSoup
 import httpx
 
-from src.config import Config, default_config
+from src.config import Config
 from src.fetch import AsyncFetcher
 from src.models import CandidateDomain
 from src.utils import normalize_domain, is_valid_domain
@@ -53,7 +53,8 @@ class OnShopifyDiscovery:
             soup = BeautifulSoup(res.text, "lxml")
             page_detail_count = 0
             for a in soup.find_all("a", href=True):
-                href = a["href"].strip()
+                raw_href = a.get("href")
+                href = (raw_href[0] if isinstance(raw_href, list) else str(raw_href or "")).strip()
                 if href.startswith("/website/shopify-site-"):
                     if href not in seen_detail_paths:
                         seen_detail_paths.add(href)
