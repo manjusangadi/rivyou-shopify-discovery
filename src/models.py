@@ -67,10 +67,14 @@ class AuditRecord:
     shopify_verified: bool = False
     shopify_score: int = 0
     shopify_signals: str = ""
+    shopify_secondary_verified: bool = False
     india_verified: bool = False
     india_score: int = 0
     india_signals: str = ""
+    strong_india_evidence: str = ""
     state_source: str = ""
+    final_decision: str = ""
+    rejection_reason: str = ""
     contact_pages_checked: int = 0
     emails_found: int = 0
     phones_found: int = 0
@@ -89,10 +93,14 @@ class AuditRecord:
             "shopify_verified": self.shopify_verified,
             "shopify_score": self.shopify_score,
             "shopify_signals": self.shopify_signals,
+            "shopify_secondary_verified": self.shopify_secondary_verified,
             "india_verified": self.india_verified,
             "india_score": self.india_score,
             "india_signals": self.india_signals,
+            "strong_india_evidence": self.strong_india_evidence,
             "state_source": self.state_source,
+            "final_decision": self.final_decision,
+            "rejection_reason": self.rejection_reason,
             "contact_pages_checked": self.contact_pages_checked,
             "emails_found": self.emails_found,
             "phones_found": self.phones_found,
