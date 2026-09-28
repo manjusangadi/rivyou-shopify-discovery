@@ -1,0 +1,82 @@
+# Rivyou Shopify India Discovery - Seed Candidates
+# Format: raw domain, http/https URL, or subdomain
+# Blank lines and lines starting with '#' are ignored.
+# NOTE: All seeds undergo strict independent Shopify & India verification.
+
+# Apparel & Fashion
+https://www.snitch.co.in/
+beyoung.in
+https://thesouledstore.com/
+bluorng.com
+https://marchtee.com/
+bombayshirts.com
+powerlook.in
+veirdo.in
+damensch.com
+https://bunaai.com/
+karagiri.com
+libas.in
+chidiyaa.com
+fablestreet.com
+
+# Beauty & Skincare
+sugar-cosmetics.myshopify.com
+https://plumgoodness.com/
+mcaffeine.com
+dotandkey.com
+mominspires.myshopify.com
+juicychemistry.com
+re-equil.com
+earthrhythm.com
+foxtale.in
+minimalist.co.in
+https://arata.in/
+
+# Food, Beverages & Health
+slurrp-farm.myshopify.com
+blue-tokai-coffee-roasters.myshopify.com
+vadamhamteas.com
+sleepyowl.co
+chaayos.myshopify.com
+countrydelight.in
+trueelements.com
+open-secret.myshopify.com
+kapiva.in
+auric.co.in
+
+# Home, Kitchen & Decor
+indianartvilla.in
+thedecorkart.com
+nestasia.in
+ellementry.com
+chumbak.com
+mokobara.com
+dailyobjects.com
+
+# Kids, Toys & Baby
+shumee.in
+smartivity.in
+firstcry.myshopify.com
+superbottoms.com
+skoolkid.myshopify.com
+
+# Electronics & Audio
+boat-lifestyle.myshopify.com
+hammeronline.in
+portronics.com
+noise-india.myshopify.com
+crossbeats.com
+
+# Jewelry & Accessories
+giva.co
+voylla.com
+shaya.co.in
+palmonas.com
+pipabella.com
+
+# Footwear
+neemans.com
+flatheads.in
+pavers-england.myshopify.com
+solethreads.com
+inc5shoes.com
