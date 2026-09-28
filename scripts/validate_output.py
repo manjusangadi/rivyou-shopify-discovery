@@ -62,6 +62,7 @@ def validate_outputs(
     invalid_domains = 0
     invalid_states = 0
     favicon_logos = 0
+    unclassified_category = 0
     missing_category = 0
     missing_description = 0
     missing_email = 0
@@ -102,8 +103,10 @@ def validate_outputs(
 
         # Category
         cat = (r.get("category") or "").strip()
-        if not cat or cat == "other":
+        if not cat:
             missing_category += 1
+        elif cat == "other":
+            unclassified_category += 1
 
         # Tagline / description
         if not (r.get("tagline_description") or "").strip():
@@ -113,40 +116,68 @@ def validate_outputs(
         logo = (r.get("logo") or "").strip().lower()
         if not logo:
             missing_logo += 1
-        elif "favicon" in logo or "apple-touch-icon" in logo:
+        elif any(bad in logo for bad in ["favicon", "apple-touch-icon", "no-image", "placeholder"]):
             favicon_logos += 1
 
+    actual_email_cov = (total_rows - missing_email) / max(1, total_rows)
+    actual_phone_cov = (total_rows - missing_phone) / max(1, total_rows)
+    actual_social_cov = (total_rows - missing_socials) / max(1, total_rows)
+    actual_state_cov = (total_rows - missing_state) / max(1, total_rows)
+    actual_logo_cov = (total_rows - missing_logo) / max(1, total_rows)
+
     print("\n--- Validation Statistics ---")
-    print(f"Total rows:           {total_rows}")
-    print(f"Duplicate domains:    {duplicate_domains}")
-    print(f"Invalid domains:      {invalid_domains}")
-    print(f"Invalid states:       {invalid_states}")
-    print(f"Favicon logos:        {favicon_logos}")
-    print(f"Missing category:     {missing_category}")
-    print(f"Missing description:  {missing_description}")
-    print(f"Missing email:        {missing_email}")
-    print(f"Missing phone:        {missing_phone}")
-    print(f"Missing socials:      {missing_socials}")
-    print(f"Missing state:        {missing_state}")
-    print(f"Missing logo:         {missing_logo}")
+    print(f"Total rows:             {total_rows}")
+    print(f"Duplicate domains:      {duplicate_domains}")
+    print(f"Invalid domains:        {invalid_domains}")
+    print(f"Invalid states:         {invalid_states}")
+    print(f"Favicon/Bad logos:      {favicon_logos}")
+    print(f"Unclassified category:  {unclassified_category}")
+    print(f"Missing category:       {missing_category}")
+    print(f"Missing description:    {missing_description}")
+    print(f"Missing email:          {missing_email}")
+    print(f"Missing phone:          {missing_phone}")
+    print(f"Missing socials:        {missing_socials}")
+    print(f"Missing state:          {missing_state}")
+    print(f"Missing logo:           {missing_logo}")
+
+    passed = True
 
     # Summary JSON validation
     if summary_path.exists():
         with open(summary_path, "r", encoding="utf-8") as f:
             summary = json.load(f)
             print("\n--- Summary Verification ---")
-            print(f"Candidate count:      {summary.get('candidate_count')}")
-            print(f"Unique candidates:    {summary.get('unique_candidate_count')}")
-            print(f"Shopify verified:     {summary.get('shopify_verified')}")
-            print(f"India verified:       {summary.get('india_verified')}")
-            print(f"Final stores:         {summary.get('final_stores')}")
-            print(f"Email coverage:       {summary.get('email_coverage', 0)*100:.1f}%")
-            print(f"Phone coverage:       {summary.get('phone_coverage', 0)*100:.1f}%")
-            print(f"Social coverage:      {summary.get('social_coverage', 0)*100:.1f}%")
-            print(f"State coverage:       {summary.get('state_coverage', 0)*100:.1f}%")
+            print(f"Candidate count:        {summary.get('candidate_count')}")
+            print(f"Unique candidates:      {summary.get('unique_candidate_count')}")
+            print(f"Shopify verified:       {summary.get('shopify_verified')}")
+            print(f"India verified:         {summary.get('india_verified')}")
+            print(f"Final stores:           {summary.get('final_stores')}")
+            print(f"Email coverage:         {summary.get('email_coverage', 0)*100:.1f}% (Actual: {actual_email_cov*100:.1f}%)")
+            print(f"Phone coverage:         {summary.get('phone_coverage', 0)*100:.1f}% (Actual: {actual_phone_cov*100:.1f}%)")
+            print(f"Social coverage:        {summary.get('social_coverage', 0)*100:.1f}% (Actual: {actual_social_cov*100:.1f}%)")
+            print(f"State coverage:         {summary.get('state_coverage', 0)*100:.1f}% (Actual: {actual_state_cov*100:.1f}%)")
+            print(f"Logo coverage:          {summary.get('logo_coverage', 0)*100:.1f}% (Actual: {actual_logo_cov*100:.1f}%)")
+
+            # Consistency checks between stores.csv and summary.json
+            sum_final = summary.get("final_stores", 0)
+            if total_rows != sum_final:
+                print(f"[FAIL] Row count mismatch! stores.csv has {total_rows} rows but summary.json says {sum_final}!")
+                passed = False
+
+            metrics_to_check = [
+                ("email_coverage", actual_email_cov),
+                ("phone_coverage", actual_phone_cov),
+                ("social_coverage", actual_social_cov),
+                ("state_coverage", actual_state_cov),
+                ("logo_coverage", actual_logo_cov),
+            ]
+            for metric_key, actual_val in metrics_to_check:
+                sum_val = summary.get(metric_key, 0.0)
+                if abs(actual_val - sum_val) > 0.005:
+                    print(f"[FAIL] {metric_key} mismatch! Calculated {actual_val:.4f} != summary.json {sum_val:.4f} (diff > 0.5%)")
+                    passed = False
 
     # Critical failure checks
-    passed = True
     if duplicate_domains > 0:
         print("[FAIL] Found duplicate domains in stores.csv!")
         passed = False
@@ -157,11 +188,13 @@ def validate_outputs(
         print("[FAIL] Found non-canonical state strings!")
         passed = False
     if favicon_logos > 0:
-        print("[FAIL] Found favicons accepted as brand logos!")
+        print("[FAIL] Found favicons or placeholder images accepted as brand logos!")
         passed = False
 
     if passed:
         print("\n[SUCCESS] Output data passed all strict validation checks!")
+    else:
+        print("\n[ERROR] Output data validation failed critical checks!")
     print("="*60)
     return passed
 
@@ -179,6 +212,8 @@ def main():
     summary_path = project_root / args.summary
 
     success = validate_outputs(stores_path, audit_path, summary_path)
+    if not success:
+        sys.exit(1)
     sys.exit(0 if success else 1)
 
 
