@@ -2,7 +2,7 @@
 Asynchronous HTTP client with connection pooling, retries, concurrency limits, and polite delays.
 """
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import random
 import time
@@ -20,7 +20,7 @@ class FetchResult:
     final_url: str
     status_code: int
     text: str
-    headers: Dict[str, str]
+    headers: Dict[str, str] = field(default_factory=dict)
     error: Optional[str] = None
     elapsed_seconds: float = 0.0
 
@@ -56,7 +56,7 @@ class AsyncFetcher:
                 timeout=httpx.Timeout(self.config.request_timeout, connect=10.0),
                 follow_redirects=True,
                 limits=limits,
-                verify=False  # Avoid halting on outdated SSL intermediate certs on Indian SMB domains
+                verify=True  # Strict TLS verification per assignment specification
             )
         return self._client
 
