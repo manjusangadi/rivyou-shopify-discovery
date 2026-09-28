@@ -96,18 +96,31 @@ class DataExtractor:
     emails, phone numbers, social media links, categories, taglines, and logo URLs.
     """
 
-    def discover_internal_links(self, base_url: str, html: str, max_links: int = 5) -> List[str]:
+    def discover_internal_links(self, base_url: str, html: str, max_links: int = 4) -> List[str]:
         """
-        Discovers key contact/about internal pages from links on the homepage.
+        Discovers key contact/about/policies internal pages from links on the homepage,
+        strictly prioritized by importance:
+        1. Contact (/contact, /contact-us, /pages/contact)
+        2. About (/about, /about-us, /pages/about)
+        3. Support/Help (/support, /help, /customer-care)
+        4. Policies/Terms/Shipping (/policies, /terms, /privacy, /shipping)
         """
         if not html:
             return []
 
-        contact_keywords = [
-            "contact", "contact-us", "contactus", "about", "about-us",
-            "support", "help", "customer-care", "terms", "privacy", "policies"
+        priority_tiers = [
+            # Tier 1: Direct Contact
+            ["contact-us", "contact_us", "contactus", "/contact", "pages/contact"],
+            # Tier 2: About Company / Registered Info
+            ["about-us", "about_us", "aboutus", "/about", "pages/about"],
+            # Tier 3: Support / Help / Customer Care
+            ["customer-care", "customer-service", "support", "help"],
+            # Tier 4: Policies / Terms / Shipping / Returns (Often contains GSTIN, legal registered office)
+            ["terms-of-service", "terms-and-conditions", "policies", "privacy-policy", "shipping-policy", "refund-policy", "terms", "shipping", "policy", "return", "refund", "faq"]
         ]
-        found_links: Set[str] = set()
+
+        found_by_tier: Dict[int, List[str]] = {i: [] for i in range(len(priority_tiers))}
+        seen_targets: Set[str] = set()
 
         try:
             soup = BeautifulSoup(html, "lxml")
@@ -126,18 +139,36 @@ class DataExtractor:
                 if parsed.netloc.lower() != base_domain:
                     continue
 
-                path_lower = parsed.path.lower()
-                if any(kw in path_lower for kw in contact_keywords):
-                    # Canonical clean URL
-                    clean_target = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-                    found_links.add(clean_target)
-                    if len(found_links) >= max_links:
+                clean_path = parsed.path.rstrip("/")
+                if not clean_path:
+                    continue
+
+                clean_target = f"{parsed.scheme}://{parsed.netloc}{clean_path}"
+                if clean_target in seen_targets:
+                    continue
+
+                path_lower = clean_path.lower()
+                for tier_idx, keywords in enumerate(priority_tiers):
+                    if any(kw in path_lower for kw in keywords):
+                        found_by_tier[tier_idx].append(clean_target)
+                        seen_targets.add(clean_target)
                         break
 
         except Exception as e:
             logger.debug(f"[extract] Error discovering internal links for {base_url}: {e}")
 
-        return list(found_links)
+        # Flatten in prioritized order up to max_links
+        ordered_links: List[str] = []
+        for tier_idx in range(len(priority_tiers)):
+            for link in found_by_tier[tier_idx]:
+                if len(ordered_links) < max_links:
+                    ordered_links.append(link)
+                else:
+                    break
+            if len(ordered_links) >= max_links:
+                break
+
+        return ordered_links
 
     def extract_emails(self, html_contents: List[str]) -> List[str]:
         """
@@ -422,11 +453,13 @@ class DataExtractor:
 
         url_lower = url.lower()
 
-        # Reject favicons
+        # Reject favicons, UI icons, badges, and obvious placeholders
         if any(bad in url_lower for bad in [
             "favicon", "apple-touch-icon", "mask-icon", "browserconfig",
             "avatar", "payment", "visa", "mastercard", "paypal", "badge",
-            "star.svg", "rating", "cart", "search", "loading"
+            "star.svg", "rating", "cart", "search", "loading", "spinner",
+            "no-image", "no_image", "no-image-2048", "placeholder",
+            "default-image", "default_image", "product-placeholder", "blank.png"
         ]):
             return False
 
