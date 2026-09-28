@@ -55,6 +55,26 @@ PLACEHOLDER_EMAILS = {
     "email@domain.com",
     "yourname@email.com",
     "support@yourdomain.com",
+    "mail@example.com",
+    "support@example.com",
+    "hello@example.com",
+    "test@example.com",
+    "admin@example.com",
+    "contact@example.com",
+    "sales@example.com",
+    "john.doe@example.com",
+}
+
+# Domains commonly used for mockups, documentation, and theme defaults
+PLACEHOLDER_EMAIL_DOMAINS = {
+    "example.com",
+    "test.com",
+    "domain.com",
+    "yourdomain.com",
+    "email.com",
+    "mybrand.com",
+    "sitename.com",
+    "website.com",
 }
 
 
@@ -163,6 +183,10 @@ def is_valid_email(email: str) -> bool:
     email = email.strip().lower()
 
     if email in PLACEHOLDER_EMAILS:
+        return False
+
+    domain_part = email.split("@")[-1]
+    if domain_part in PLACEHOLDER_EMAIL_DOMAINS or any(domain_part.endswith("." + d) for d in PLACEHOLDER_EMAIL_DOMAINS):
         return False
 
     # Must match standard email pattern
