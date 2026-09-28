@@ -71,7 +71,7 @@ def validate_outputs(
     missing_logo = 0
 
     for r in rows:
-        dom = normalize_domain(r.get("domain_url", ""))
+        dom = normalize_domain(r.get("domain_url") or "")
         if not dom or not is_valid_domain(dom):
             invalid_domains += 1
         elif dom in seen_domains:
@@ -80,14 +80,14 @@ def validate_outputs(
             seen_domains.add(dom)
 
         # State validation
-        st = r.get("state", "").strip()
+        st = (r.get("state") or "").strip()
         if not st:
             missing_state += 1
         elif st not in CANONICAL_STATES_AND_UTS:
             invalid_states += 1
 
         # Contacts validation
-        contacts = r.get("all_contacts", "").strip()
+        contacts = (r.get("all_contacts") or "").strip()
         has_email = any("@" in c for c in contacts.split(";")) if contacts else False
         has_phone = any("+" in c or c.isdigit() for c in contacts.split(";")) if contacts else False
 
@@ -97,20 +97,20 @@ def validate_outputs(
             missing_phone += 1
 
         # Socials
-        if not r.get("socials", "").strip():
+        if not (r.get("socials") or "").strip():
             missing_socials += 1
 
         # Category
-        cat = r.get("category", "").strip()
+        cat = (r.get("category") or "").strip()
         if not cat or cat == "other":
             missing_category += 1
 
         # Tagline / description
-        if not r.get("tagline_description", "").strip():
+        if not (r.get("tagline_description") or "").strip():
             missing_description += 1
 
         # Logo
-        logo = r.get("logo", "").strip().lower()
+        logo = (r.get("logo") or "").strip().lower()
         if not logo:
             missing_logo += 1
         elif "favicon" in logo or "apple-touch-icon" in logo:
