@@ -86,7 +86,7 @@ CATEGORY_KEYWORDS = {
 def _get_attr_str(tag, attr: str) -> str:
     val = tag.get(attr, "")
     if isinstance(val, list):
-        return str(val[0]).strip() if val else ""
+        return " ".join(str(v) for v in val).strip()
     return str(val or "").strip()
 
 
@@ -257,11 +257,11 @@ class DataExtractor:
 
         try:
             soup = BeautifulSoup(homepage_html, "lxml")
-            title = soup.title.string if soup.title else ""
+            title = soup.title.get_text() if soup.title else ""
             meta_desc = ""
             desc_tag = soup.find("meta", attrs={"name": re.compile(r"description", re.I)})
-            if desc_tag and desc_tag.get("content"):
-                meta_desc = desc_tag["content"]
+            if desc_tag:
+                meta_desc = _get_attr_str(desc_tag, "content")
 
             headings = " ".join([h.get_text() for h in soup.find_all(["h1", "h2"])])
             nav_links = " ".join([a.get_text() for a in soup.find_all("nav")])
@@ -306,17 +306,21 @@ class DataExtractor:
 
             # 1. Meta description
             meta_desc = soup.find("meta", attrs={"name": re.compile(r"^description$", re.I)})
-            if meta_desc and meta_desc.get("content"):
-                cleaned = clean_text(meta_desc["content"])
-                if len(cleaned) > 20:
-                    return cleaned
+            if meta_desc:
+                content_val = _get_attr_str(meta_desc, "content")
+                if content_val:
+                    cleaned = clean_text(content_val)
+                    if len(cleaned) > 20:
+                        return cleaned
 
             # 2. og:description
             og_desc = soup.find("meta", attrs={"property": "og:description"}) or soup.find("meta", attrs={"name": "og:description"})
-            if og_desc and og_desc.get("content"):
-                cleaned = clean_text(og_desc["content"])
-                if len(cleaned) > 20:
-                    return cleaned
+            if og_desc:
+                content_val = _get_attr_str(og_desc, "content")
+                if content_val:
+                    cleaned = clean_text(content_val)
+                    if len(cleaned) > 20:
+                        return cleaned
 
             # 3. JSON-LD description
             for script in soup.find_all("script", type="application/ld+json"):
@@ -381,7 +385,7 @@ class DataExtractor:
 
             # Priority 2: <img> with alt or class matching brand logo
             for img in soup.find_all("img"):
-                src = img.get("src") or img.get("data-src") or img.get("srcset")
+                src = _get_attr_str(img, "src") or _get_attr_str(img, "data-src") or _get_attr_str(img, "srcset")
                 if not src:
                     continue
 
@@ -389,9 +393,9 @@ class DataExtractor:
                 if " " in src and "," in src:
                     src = src.split(",")[0].strip().split(" ")[0]
 
-                alt = img.get("alt", "").lower()
-                cls = " ".join(img.get("class", [])).lower()
-                img_id = img.get("id", "").lower()
+                alt = _get_attr_str(img, "alt").lower()
+                cls = _get_attr_str(img, "class").lower()
+                img_id = _get_attr_str(img, "id").lower()
                 src_lower = src.lower()
 
                 # Score logo signals
