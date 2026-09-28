@@ -114,3 +114,42 @@ class ShopifyDetector:
             signals=signals,
             details=details
         )
+
+    @staticmethod
+    def verify_secondary_response(endpoint: str, data: Any) -> Tuple[bool, List[str]]:
+        """
+        Validates that a response from a secondary endpoint (/products.json or /cart.json)
+        exhibits authentic Shopify structural signatures, not just arbitrary JSON or HTTP 200.
+        """
+        if not isinstance(data, dict):
+            return False, []
+
+        signals: List[str] = []
+        if "products.json" in endpoint:
+            if "products" in data and isinstance(data["products"], list):
+                products = data["products"]
+                if len(products) == 0:
+                    signals.append("shopify_products_json_empty")
+                    return True, signals
+                sample = products[0]
+                if isinstance(sample, dict):
+                    shopify_product_keys = {"id", "title", "handle", "variants", "images", "vendor", "product_type"}
+                    matching = shopify_product_keys.intersection(sample.keys())
+                    if len(matching) >= 3:
+                        signals.append("shopify_products_json_schema")
+                        return True, signals
+
+        elif "cart.json" in endpoint or "cart.js" in endpoint:
+            shopify_cart_keys = {
+                "token", "note", "attributes", "original_total_price",
+                "total_price", "total_discount", "total_weight", "item_count",
+                "items", "requires_shipping", "currency"
+            }
+            matching = shopify_cart_keys.intersection(data.keys())
+            specific_keys = {"token", "requires_shipping", "original_total_price", "item_count"}
+            if len(matching) >= 4 and any(k in data for k in specific_keys):
+                signals.append("shopify_cart_json_schema")
+                return True, signals
+
+        return False, []
+
