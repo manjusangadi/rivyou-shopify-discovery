@@ -36,10 +36,10 @@ class RobotsChecker:
                 rp.parse(resp.text.splitlines())
             else:
                 # 404 or non-200 generally implies no crawling restrictions
-                rp.allow_all = True
+                rp.parse([])
         except Exception as e:
             logger.debug(f"[robots.txt] Failed to fetch robots.txt for {domain}: {e}. Allowing access.")
-            rp.allow_all = True
+            rp.parse([])
 
         self._cache[domain] = rp
         return rp
