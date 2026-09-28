@@ -54,7 +54,13 @@ class OnShopifyDiscovery:
             page_detail_count = 0
             for a in soup.find_all("a", href=True):
                 raw_href = a.get("href")
-                href = (raw_href[0] if isinstance(raw_href, list) else str(raw_href or "")).strip()
+                if isinstance(raw_href, list):
+                    href = raw_href[0].strip() if raw_href else ""
+                elif isinstance(raw_href, str):
+                    href = raw_href.strip()
+                else:
+                    continue
+
                 if href.startswith("/website/shopify-site-"):
                     if href not in seen_detail_paths:
                         seen_detail_paths.add(href)
