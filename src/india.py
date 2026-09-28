@@ -192,6 +192,35 @@ MAJOR_INDIAN_CITIES: Dict[str, str] = {
     "vijayawada": "Andhra Pradesh",
 }
 
+# India Post 2-digit PIN code prefix to State mapping
+PIN_PREFIX_TO_STATE: Dict[str, str] = {
+    "11": "Delhi",
+    "12": "Haryana", "13": "Haryana",
+    "14": "Punjab", "15": "Punjab",
+    "16": "Chandigarh",
+    "17": "Himachal Pradesh",
+    "18": "Jammu and Kashmir", "19": "Jammu and Kashmir",
+    "20": "Uttar Pradesh", "21": "Uttar Pradesh", "22": "Uttar Pradesh",
+    "23": "Uttar Pradesh", "24": "Uttar Pradesh", "25": "Uttar Pradesh",
+    "26": "Uttar Pradesh", "27": "Uttar Pradesh", "28": "Uttar Pradesh",
+    "30": "Rajasthan", "31": "Rajasthan", "32": "Rajasthan", "33": "Rajasthan", "34": "Rajasthan",
+    "36": "Gujarat", "37": "Gujarat", "38": "Gujarat", "39": "Gujarat",
+    "41": "Maharashtra", "42": "Maharashtra", "43": "Maharashtra", "44": "Maharashtra",
+    "45": "Madhya Pradesh", "46": "Madhya Pradesh", "47": "Madhya Pradesh", "48": "Madhya Pradesh",
+    "49": "Chhattisgarh",
+    "50": "Telangana",
+    "51": "Andhra Pradesh", "52": "Andhra Pradesh", "53": "Andhra Pradesh",
+    "56": "Karnataka", "57": "Karnataka", "58": "Karnataka", "59": "Karnataka",
+    "60": "Tamil Nadu", "61": "Tamil Nadu", "62": "Tamil Nadu", "63": "Tamil Nadu", "64": "Tamil Nadu",
+    "67": "Kerala", "68": "Kerala", "69": "Kerala",
+    "70": "West Bengal", "71": "West Bengal", "72": "West Bengal", "73": "West Bengal", "74": "West Bengal",
+    "75": "Odisha", "76": "Odisha", "77": "Odisha",
+    "78": "Assam",
+    "80": "Bihar", "81": "Bihar", "82": "Bihar",
+    "83": "Jharkhand",
+    "84": "Bihar", "85": "Bihar",
+}
+
 
 class IndiaVerifier:
     """
@@ -235,6 +264,70 @@ class IndiaVerifier:
 
         return None
 
+    def _state_from_pin(self, pin: str) -> Optional[str]:
+        """Maps a 6-digit Indian PIN code to its canonical State / Union Territory."""
+        if not pin or len(pin) != 6 or not pin.isdigit():
+            return None
+        prefix3 = pin[:3]
+        if prefix3 in {"400", "401", "402"}:
+            return "Maharashtra"
+        if prefix3 == "403":
+            return "Goa"
+        if prefix3 in {"248", "249"}:
+            return "Uttarakhand"
+        if prefix3 == "605":
+            return "Puducherry"
+        prefix2 = pin[:2]
+        return PIN_PREFIX_TO_STATE.get(prefix2)
+
+    def _is_shipping_text(self, text_snippet: str) -> bool:
+        """Identifies text that merely mentions delivery/shipping destinations rather than office location."""
+        lower = text_snippet.lower()
+        shipping_triggers = [
+            "we ship", "ships to", "shipping to", "ship across",
+            "we deliver", "delivery to", "delivering to", "deliver all across",
+            "delivery across", "available across", "pan india", "cash on delivery",
+            "cod available in", "orders delivered to", "free shipping", "shipping available in"
+        ]
+        return any(trig in lower for trig in shipping_triggers)
+
+    def _extract_address_blocks(self, html_content: str, full_text: str) -> List[str]:
+        """
+        Extracts high-confidence address and contact blocks from HTML and text,
+        filtering out marketing/shipping snippets.
+        """
+        address_blocks = []
+        if html_content:
+            try:
+                soup = BeautifulSoup(html_content, "lxml")
+                # 1. <address> tags
+                for addr_tag in soup.find_all("address"):
+                    t = addr_tag.get_text(separator=" ", strip=True)
+                    if t and not self._is_shipping_text(t):
+                        address_blocks.append(t)
+
+                # 2. Specific class / id elements
+                for el in soup.find_all(attrs={"class": re.compile(r"(?:address|contact|footer|location|headquarter|office)", re.I)}):
+                    t = el.get_text(separator=" ", strip=True)
+                    if 15 < len(t) < 800 and not self._is_shipping_text(t):
+                        address_blocks.append(t)
+            except Exception:
+                pass
+
+        # 3. Text regex extraction for office/address prefixes
+        text_patterns = [
+            r"(?:registered\s+office|head\s+office|corporate\s+office|branch\s+office|our\s+office|factory\s+address|office\s+address|contact\s+us|reach\s+us)[\s\:\-]{1,5}[^\n\r\.]{10,250}",
+            r"(?:pin(?:code)?[\s\:\-]*|postal\s+code[\s\:\-]*)[1-8][0-9]{5}[^\n\r\.]{0,100}",
+            r"\b[A-Za-z0-9\s,\-\/]{5,60}(?:street|road|nagar|marg|complex|plaza|building|floor|cross|layout|phase|sector|colony|bazaar|industrial\s+area)[A-Za-z0-9\s,\-\/]{5,80}(?:[1-8][0-9]{5})?"
+        ]
+        for pat in text_patterns:
+            for m in re.finditer(pat, full_text, re.IGNORECASE):
+                chunk = m.group(0).strip()
+                if not self._is_shipping_text(chunk):
+                    address_blocks.append(chunk)
+
+        return address_blocks
+
     def verify(
         self,
         domain: str,
@@ -243,83 +336,106 @@ class IndiaVerifier:
     ) -> IndiaVerification:
         score = 0
         signals: List[str] = []
+        strong_location_signals: List[str] = []
         state: Optional[str] = None
         state_source: Optional[str] = None
         details: Dict[str, Any] = {}
 
         full_text = f"{html_content} {all_pages_text or ''}"
         text_lower = full_text.lower()
+        address_blocks = self._extract_address_blocks(html_content, full_text)
+        address_text_combined = " ".join(address_blocks).lower()
 
-        # 1. Domain TLD Signals
-        if domain.endswith(".co.in"):
-            score += 2
-            signals.append("domain:.co.in")
-        elif domain.endswith(".in"):
-            score += 1
-            signals.append("domain:.in")
-
-        # 2. JSON-LD Structured PostalAddress
-        json_ld_state, json_ld_country = self._extract_jsonld_address(html_content)
-        if json_ld_country and ("india" in json_ld_country.lower() or json_ld_country.upper() in {"IN", "IND"}):
-            score += 8
-            signals.append("jsonld_india_address")
-            if json_ld_state:
-                matched_state = self.normalize_state(json_ld_state)
-                if matched_state:
-                    state = matched_state
-                    state_source = "json_ld_address"
-                    score += 6
-                    signals.append(f"state:{matched_state}")
-
-        # 3. GSTIN Detection (15-character Indian Goods & Services Tax Number)
-        # Format: 2 digits (State Code) + 5 alpha (PAN) + 4 numeric + 1 alpha + 1 entity + 'Z' + 1 check digit
+        # -------------------------------------------------------------
+        # Hierarchy Tier 1: GSTIN Match & State Code (Highest Confidence)
+        # -------------------------------------------------------------
         gstin_match = re.search(r"\b([0-3][0-9])[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b", full_text)
         if gstin_match:
             st_code = gstin_match.group(1)
             gst_state = GST_STATE_CODES.get(st_code)
-            score += 6
+            score += 8
             signals.append(f"gstin:{gstin_match.group(0)}")
-            if gst_state and not state:
+            strong_location_signals.append("gstin")
+            if gst_state:
                 state = gst_state
                 state_source = f"gstin_code_{st_code}"
 
-        # 4. Indian Phone Number (+91 prefix or Indian mobile format)
+        # -------------------------------------------------------------
+        # Hierarchy Tier 2: JSON-LD Structured PostalAddress
+        # -------------------------------------------------------------
+        json_ld_state, json_ld_country = self._extract_jsonld_address(html_content)
+        if json_ld_country and ("india" in json_ld_country.lower() or json_ld_country.upper() in {"IN", "IND"}):
+            score += 8
+            signals.append("jsonld_india_address")
+            strong_location_signals.append("jsonld_address")
+            if json_ld_state:
+                matched_state = self.normalize_state(json_ld_state)
+                if matched_state:
+                    score += 6
+                    signals.append(f"state:{matched_state}")
+                    if not state:
+                        state = matched_state
+                        state_source = "json_ld_address"
+
+        # -------------------------------------------------------------
+        # Hierarchy Tier 3: Explicit State in Business / Contact Address
+        # -------------------------------------------------------------
+        if address_blocks:
+            addr_state = self._detect_state_in_text(address_text_combined)
+            if addr_state:
+                score += 6
+                signals.append(f"address_state:{addr_state}")
+                strong_location_signals.append("address_state")
+                if not state:
+                    state = addr_state
+                    state_source = "address_state"
+
+        # -------------------------------------------------------------
+        # Hierarchy Tier 4: Validated PIN Code in Address Context
+        # -------------------------------------------------------------
+        pin_match = None
+        if address_blocks:
+            pin_match = re.search(r"(?:pin(?:code)?[\s\:\-]*|india[\s,.-]*|\b)([1-8][0-9]{5})\b", address_text_combined, re.IGNORECASE)
+
+        if not pin_match:
+            pin_near_addr = re.search(r"(?:registered\s+office|head\s+office|corporate\s+office|pincode[\s\:\-]*|pin[\s\:\-]*|postcode[\s\:\-]*)[\w\s,.-]{0,40}(\b[1-8][0-9]{5}\b)", full_text, re.IGNORECASE)
+            if pin_near_addr and not self._is_shipping_text(pin_near_addr.group(0)):
+                pin_match = pin_near_addr
+
+        if pin_match:
+            pin_val = pin_match.group(1)
+            score += 5
+            signals.append(f"address_pin:{pin_val}")
+            strong_location_signals.append("address_pincode")
+            if not state:
+                derived_state = self._state_from_pin(pin_val)
+                if derived_state:
+                    state = derived_state
+                    state_source = f"pin_code_{pin_val}"
+
+        # -------------------------------------------------------------
+        # Hierarchy Tier 5: City in Address Context
+        # -------------------------------------------------------------
+        if address_blocks:
+            city_found, city_state = self._detect_city(address_text_combined)
+            if city_found:
+                score += 4
+                signals.append(f"address_city:{city_found}")
+                strong_location_signals.append("address_city")
+                if not state:
+                    state = city_state
+                    state_source = f"address_city_{city_found}"
+
+        # -------------------------------------------------------------
+        # Supporting Signals (Contribute to score, but CANNOT verify alone)
+        # -------------------------------------------------------------
+        # Phone (+91)
         if re.search(r"(?:\+91[\s\-]?)?[6-9]\d{9}\b", full_text) or "+91" in full_text:
-            # Check specifically for +91 or tel:+91
             if "+91" in full_text or "tel:+91" in full_text or "91-" in full_text:
                 score += 5
                 signals.append("phone:+91")
 
-        # 5. Indian PIN code (6 digits, starting 1-8)
-        # Ensure it is near state/city keywords or "pincode", "pin", "india" to avoid false matches
-        pin_match = re.search(r"(?:pin(?:code)?[\s:]*|india[\s,.-]*)(\b[1-8][0-9]{5}\b)", full_text, re.IGNORECASE)
-        if not pin_match:
-            # Look for 6-digit number following state or city
-            pin_match = re.search(r"(?:delhi|mumbai|bengaluru|bangalore|chennai|hyderabad|pune|ahmedabad|jaipur|kolkata|karnataka|maharashtra|tamil nadu|gujarat)[\s,.-]*(\b[1-8][0-9]{5}\b)", full_text, re.IGNORECASE)
-
-        if pin_match:
-            score += 5
-            signals.append(f"pin_code:{pin_match.group(1)}")
-
-        # 6. Indian City detection
-        city_found, city_state = self._detect_city(text_lower)
-        if city_found:
-            score += 4
-            signals.append(f"city:{city_found}")
-            if city_state and not state:
-                state = city_state
-                state_source = f"city_{city_found}"
-
-        # 7. Indian State mentioned directly in text
-        if not state:
-            matched_state = self._detect_state_in_text(text_lower)
-            if matched_state:
-                state = matched_state
-                state_source = "text_mention"
-                score += 6
-                signals.append(f"state:{matched_state}")
-
-        # 8. Indian Payment Gateways & UPI
+        # Payment Gateways (Razorpay, Cashfree, UPI, etc.)
         payment_signals = []
         if any(g in text_lower for g in ["razorpay", "cashfree", "payu", "paytm", "phonepe", "upi", "bhim"]):
             payment_signals.append("indian_payment_gateway")
@@ -327,15 +443,42 @@ class IndiaVerifier:
             score += 3
             signals.extend(payment_signals)
 
-        # 9. Currency Signals (INR, ₹, Rs.)
+        # Currency (INR, ₹, Rs.)
         if "₹" in full_text or "inr" in text_lower or "rs." in text_lower or "rupees" in text_lower:
             score += 2
             signals.append("currency:INR")
 
-        is_india = score >= self.threshold
+        # Domain TLD
+        if domain.endswith(".co.in"):
+            score += 2
+            signals.append("domain:.co.in")
+        elif domain.endswith(".in"):
+            score += 1
+            signals.append("domain:.in")
+
+        # Isolated city mention outside address block (Supporting score only, NEVER establishes state)
+        if not address_blocks or "address_city" not in strong_location_signals:
+            iso_city, _ = self._detect_city(text_lower)
+            if iso_city and not self._is_shipping_text(text_lower):
+                score += 2
+                signals.append(f"city_mention:{iso_city}")
+
+        # -------------------------------------------------------------
+        # Final Verification Determination
+        # -------------------------------------------------------------
+        has_strong_location = len(strong_location_signals) > 0
+        is_india = (score >= self.threshold) and has_strong_location
+
+        # If state could not be established with high confidence, leave empty
+        if not state:
+            state = ""
+            state_source = ""
+
         details = {
             "score": score,
             "signals": signals,
+            "strong_location_signals": strong_location_signals,
+            "has_strong_location": has_strong_location,
             "state": state,
             "state_source": state_source,
             "threshold": self.threshold
