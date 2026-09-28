@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional, Set, Tuple
 import pandas as pd
 
 from src.config import Config, default_config
-from src.fetch import AsyncFetcher
+from src.fetch import AsyncFetcher, FetchResult
 from src.robots import RobotsChecker
 from src.discovery import CandidateDiscoveryManager
 from src.shopify import ShopifyDetector
@@ -155,19 +155,65 @@ class Pipeline:
 
         if res.status_code != 200 or not res.text:
             audit.errors = res.error or f"HTTP {res.status_code}"
+            audit.final_decision = "REJECTED_FETCH_ERROR"
+            audit.rejection_reason = audit.errors
             return None, audit
 
-        # 3. Shopify Verification
+        # 2.5 Active storefront and Demo/Test store check
+        is_active, inactive_reason = self._check_active_and_genuine_store(res, domain)
+        if not is_active:
+            audit.final_decision = "REJECTED_INACTIVE"
+            audit.rejection_reason = inactive_reason or "Inactive or demo store"
+            audit.errors = audit.rejection_reason
+            return None, audit
+
+        # 3. Shopify Verification (Primary Detection)
         shp_ver = self.shopify_detector.detect(
             domain=domain,
             html_content=res.text,
             headers=res.headers
         )
+
+        # Borderline Shopify Secondary Verification
+        # Only probed if candidate already has primary technical signals (score >= 2 and < threshold)
+        if not shp_ver.is_shopify and 2 <= shp_ver.score < self.config.shopify_threshold:
+            # Check products.json if robots allowed
+            if await self.robots.is_allowed(client, domain, "/products.json"):
+                prod_res = await self.fetcher.fetch(f"https://{domain}/products.json?limit=1", domain_key=domain)
+                if prod_res.status_code == 200 and prod_res.text:
+                    try:
+                        data = json.loads(prod_res.text)
+                        valid, sigs = self.shopify_detector.verify_secondary_response("/products.json", data)
+                        if valid:
+                            shp_ver.score += 2
+                            shp_ver.signals.extend(sigs)
+                            audit.shopify_secondary_verified = True
+                    except Exception:
+                        pass
+
+            # If still below threshold, check cart.json if robots allowed
+            if (shp_ver.score < self.config.shopify_threshold) and await self.robots.is_allowed(client, domain, "/cart.json"):
+                cart_res = await self.fetcher.fetch(f"https://{domain}/cart.json", domain_key=domain)
+                if cart_res.status_code == 200 and cart_res.text:
+                    try:
+                        data = json.loads(cart_res.text)
+                        valid, sigs = self.shopify_detector.verify_secondary_response("/cart.json", data)
+                        if valid:
+                            shp_ver.score += 2
+                            shp_ver.signals.extend(sigs)
+                            audit.shopify_secondary_verified = True
+                    except Exception:
+                        pass
+
+            shp_ver.is_shopify = (shp_ver.score >= self.config.shopify_threshold)
+
         audit.shopify_verified = shp_ver.is_shopify
         audit.shopify_score = shp_ver.score
         audit.shopify_signals = ";".join(shp_ver.signals)
 
         if not shp_ver.is_shopify:
+            audit.final_decision = "REJECTED_NON_SHOPIFY"
+            audit.rejection_reason = f"Shopify score {shp_ver.score} < threshold {self.config.shopify_threshold}"
             return None, audit
 
         # 4. India Verification (initial homepage pass)
@@ -177,10 +223,11 @@ class Pipeline:
         )
         audit.india_score = ind_ver.score
         audit.india_signals = ";".join(ind_ver.signals)
+        audit.strong_india_evidence = ";".join(ind_ver.details.get("strong_location_signals", []))
         audit.state_source = ind_ver.state_source or ""
 
-        # 5. Discover internal contact / about pages
-        internal_links = self.extractor.discover_internal_links(res.final_url, res.text, max_links=2)
+        # 5. Discover internal contact / about pages (up to 4 prioritized links)
+        internal_links = self.extractor.discover_internal_links(res.final_url, res.text, max_links=4)
         audit.contact_pages_checked = len(internal_links)
 
         # Concurrently fetch allowed internal contact/about pages
@@ -208,16 +255,23 @@ class Pipeline:
                 all_pages_text=combined_text
             )
             # Take stronger results
-            if ind_ver_full.score > ind_ver.score:
+            if ind_ver_full.score > ind_ver.score or (not ind_ver.is_india and ind_ver_full.is_india):
                 ind_ver = ind_ver_full
                 audit.india_score = ind_ver.score
                 audit.india_signals = ";".join(ind_ver.signals)
+                audit.strong_india_evidence = ";".join(ind_ver.details.get("strong_location_signals", []))
                 if ind_ver.state_source:
                     audit.state_source = ind_ver.state_source
 
         audit.india_verified = ind_ver.is_india
 
         if not ind_ver.is_india:
+            audit.final_decision = "REJECTED_NON_INDIA"
+            audit.rejection_reason = (
+                f"India score {ind_ver.score} < threshold {self.config.india_threshold}"
+                if ind_ver.score < self.config.india_threshold
+                else "Lacks strong Indian business location evidence"
+            )
             return None, audit
 
         # ==========================================
@@ -259,6 +313,9 @@ class Pipeline:
         # Canonical final domain URL
         final_domain_url = canonical_url(res.final_url or domain)
 
+        audit.final_decision = "ACCEPTED"
+        audit.rejection_reason = ""
+
         store_record = StoreRecord(
             domain_url=final_domain_url,
             all_contacts=all_contacts_str,
@@ -270,6 +327,53 @@ class Pipeline:
         )
 
         return store_record, audit
+
+    def _check_active_and_genuine_store(self, res: FetchResult, domain: str) -> Tuple[bool, Optional[str]]:
+        """
+        Inspects storefront for active commercial status, excluding password pages,
+        404/410 errors, parked domains, and obvious demo/boilerplate instances.
+        """
+        text_lower = res.text.lower() if res.text else ""
+        url_lower = res.final_url.lower()
+
+        # Inactive HTTP codes
+        if res.status_code in {404, 410}:
+            return False, f"HTTP {res.status_code} inactive"
+
+        # Password / Opening soon pages
+        if "/password" in url_lower:
+            return False, "Redirects to /password"
+
+        if "template-password" in text_lower or ('id="login_form"' in text_lower and "/password" in text_lower):
+            return False, "Password-protected storefront"
+
+        if "opening soon" in text_lower[:2500] and ("password" in text_lower[:2500] or "store will be opening soon" in text_lower):
+            return False, "Opening Soon password page"
+
+        # Parked / sale pages
+        if any(p in text_lower for p in ["this domain is parked", "buy this domain", "domain for sale", "hugedomains.com"]):
+            return False, "Parked or for-sale domain"
+
+        # Demo / test storefront detection (requires corroborating evidence)
+        dom_lower = domain.lower()
+        demo_name_indicators = ["shopifytest", "test-shop", "teststore", "dev-shop", "demo-store", "my-test-"]
+        has_demo_name = any(ind in dom_lower for ind in demo_name_indicators)
+
+        boilerplate_phrases = [
+            "write a few sentences to tell people about your store",
+            "spread the word about your shop",
+            "give customers details about the banner image",
+            "use this text to share information about your brand"
+        ]
+        has_boilerplate = any(b in text_lower for b in boilerplate_phrases)
+
+        if has_demo_name and has_boilerplate:
+            return False, "Demo/test store (naming + default Shopify boilerplate copy)"
+
+        if has_boilerplate and ("myshopify.com" in dom_lower or "test" in dom_lower):
+            return False, "Default Shopify theme boilerplate with no commercial brand content"
+
+        return True, None
 
     def _export_results(
         self,
@@ -301,9 +405,11 @@ class Pipeline:
         with open(audit_file, "w", newline="", encoding="utf-8") as f:
             fieldnames = [
                 "domain_url", "final_url", "http_status", "shopify_verified",
-                "shopify_score", "shopify_signals", "india_verified", "india_score",
-                "india_signals", "state_source", "contact_pages_checked", "emails_found",
-                "phones_found", "socials_found", "logo_source", "category_source",
+                "shopify_score", "shopify_signals", "shopify_secondary_verified",
+                "india_verified", "india_score", "india_signals", "strong_india_evidence",
+                "state_source", "final_decision", "rejection_reason",
+                "contact_pages_checked", "emails_found", "phones_found",
+                "socials_found", "logo_source", "category_source",
                 "description_source", "robots_allowed", "errors"
             ]
             writer = csv.DictWriter(f, fieldnames=fieldnames)
