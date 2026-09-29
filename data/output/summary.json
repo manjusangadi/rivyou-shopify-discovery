@@ -1,14 +1,14 @@
 {
-  "candidate_count": 178,
-  "unique_candidate_count": 178,
-  "shopify_verified": 20,
-  "india_verified": 20,
-  "final_stores": 20,
+  "candidate_count": 2613,
+  "unique_candidate_count": 2613,
+  "shopify_verified": 1352,
+  "india_verified": 1023,
+  "final_stores": 1001,
   "duplicates_removed": 0,
-  "email_coverage": 0.8,
-  "phone_coverage": 0.8,
-  "social_coverage": 0.95,
-  "state_coverage": 0.85,
-  "logo_coverage": 1.0,
-  "elapsed_seconds": 98.93
+  "email_coverage": 0.9491,
+  "phone_coverage": 0.9131,
+  "social_coverage": 0.8871,
+  "state_coverage": 0.993,
+  "logo_coverage": 0.9421,
+  "elapsed_seconds": 6787.39
 }
