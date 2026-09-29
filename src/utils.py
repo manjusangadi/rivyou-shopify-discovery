@@ -75,6 +75,9 @@ PLACEHOLDER_EMAIL_DOMAINS = {
     "mybrand.com",
     "sitename.com",
     "website.com",
+    "company.com",
+    "yourstore.com",
+    "storename.com",
 }
 
 
