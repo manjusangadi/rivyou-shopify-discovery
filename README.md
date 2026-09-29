@@ -30,7 +30,7 @@ For every verified store, the pipeline extracts:
 
 ## Architecture
 
-The system is architected as an asynchronous, multi-stage pipeline utilizing Python 3.11+, `httpx` (HTTP/2 async client), `asyncio` concurrency controls, and `BeautifulSoup4`:
+The system is architected as an asynchronous, multi-stage pipeline utilizing Python 3.11+, `httpx` (HTTP/1.1 async client with connection pooling and strict TLS verification), `asyncio` concurrency controls, and `BeautifulSoup4`:
 
 ```mermaid
 flowchart TD
@@ -73,7 +73,7 @@ The candidate discovery engine combines three distinct channels:
 1. **Source A: OnShopify India Directory (`https://onshopify.com/country-websites/IN/`)**:
    - Crawls paginated directory pages (`/country-websites/IN/`, `/country-websites/IN/2`, etc.) with configurable depth (`MAX_DISCOVERY_PAGES`).
    - Concurrently fetches store detail cards (`/website/shopify-site-XXXX`) to extract live storefront domains.
-   - Yields over 5,000+ candidate domains across 240+ directory pages.
+   - The discovery engine combines local seeds, OnShopify, and Common Crawl. Candidate counts depend on the discovery run and are recorded in summary.json.
 2. **Source B: Common Crawl CDX Index (`https://index.commoncrawl.org/`)**:
    - Queries public Common Crawl CDX APIs for `*.myshopify.com` domains across recent crawl indexes.
    - If the remote Common Crawl server closes connection or is unreachable, the pipeline logs detailed diagnostics (`[discovery:common-crawl] collection=... error=...`) and continues gracefully without blocking execution.
@@ -91,7 +91,7 @@ The discovery subsystem (`src/discovery.py`) discovers raw store candidates whil
 - **Paginated Directory Traversal**: Asynchronously iterates through OnShopify directory pages with an active `asyncio.Semaphore` to avoid overwhelming the directory host.
 - **Detail Link Resolution**: Extracts store detail URLs and parses outbound live storefront links with strict URL regex validation.
 - **Fail-Safe Operation**: If any discovery source encounters rate limiting or HTTP 5xx errors, it logs a warning, skips the batch, and proceeds with the remaining sources.
-- **Target-Driven Generation**: Candidate generation runs concurrently with store processing until the target count of verified stores (e.g. 1,000) is reached.
+- **Execution Flow**: Candidate discovery is completed and deduplicated first. The resulting candidates are then processed concurrently using bounded asynchronous workers.
 
 ---
 
@@ -152,7 +152,7 @@ For every store that passes both Shopify and India verification, the pipeline ex
 
 1. **Contact Page Discovery**:
    - Inspects homepage for internal links containing `contact`, `contact-us`, `about`, `about-us`, `policies`.
-   - Concurrently fetches top candidate pages (max 2 per domain to respect server resources).
+   - Up to 4 prioritized internal pages per domain are crawled, subject to robots.txt, rate limits, and page availability.
 2. **Email Extraction**:
    - Discovers emails from `mailto:` links, visible text regex, and JSON-LD markup.
    - Cleans out image file extensions (`.png`, `.jpg`, `.webp`, `.svg`, `.css`, `.js`), npm version tags (`bootstrap-icons@1.13.1`), and placeholder dummy emails (`example@example.com`).
@@ -225,24 +225,24 @@ Contains exactly the 7 required columns:
 | `state` | Canonical Indian State or Union Territory | `Maharashtra` |
 
 ### 2. `data/output/audit.csv` (Traceability & Reasoning)
-Records every candidate domain evaluated, including:
-`domain_url, final_url, http_status, shopify_verified, shopify_score, shopify_signals, india_verified, india_score, india_signals, state_source, contact_pages_checked, emails_found, phones_found, socials_found, logo_source, category_source, description_source, robots_allowed, errors`
+Records every candidate domain evaluated with the complete 23-column audit schema:
+`domain_url, final_url, http_status, shopify_verified, shopify_score, shopify_signals, shopify_secondary_verified, india_verified, india_score, india_signals, strong_india_evidence, state_source, final_decision, rejection_reason, contact_pages_checked, emails_found, phones_found, socials_found, logo_source, category_source, description_source, robots_allowed, errors`
 
 ### 3. `data/output/summary.json` (Run Telemetry)
 ```json
 {
-  "candidate_count": 2551,
-  "unique_candidate_count": 2551,
-  "shopify_verified": 1090,
-  "india_verified": 1024,
+  "candidate_count": 2613,
+  "unique_candidate_count": 2613,
+  "shopify_verified": 1352,
+  "india_verified": 1023,
   "final_stores": 1001,
   "duplicates_removed": 0,
-  "email_coverage": 0.8372,
-  "phone_coverage": 0.8012,
-  "social_coverage": 0.8761,
-  "state_coverage": 0.8971,
-  "logo_coverage": 0.9311,
-  "elapsed_seconds": 3244.67
+  "email_coverage": 0.9491,
+  "phone_coverage": 0.9131,
+  "social_coverage": 0.8871,
+  "state_coverage": 0.993,
+  "logo_coverage": 0.9421,
+  "elapsed_seconds": 6787.39
 }
 ```
 
@@ -269,46 +269,49 @@ This script performs strict checks:
  Rivyou Data Quality & Verification Audit Report
 ============================================================
 [PASS] All 7 required columns present: domain_url, all_contacts, socials, category, tagline_description, logo, state
-Total rows in stores.csv: 1002
+Total rows in stores.csv: 1001
 
 --- Validation Statistics ---
-Total rows:           1002
-Duplicate domains:    0
-Invalid domains:      0
-Invalid states:       0
-Favicon logos:        0
-Missing category:     172
-Missing description:  74
-Missing email:        163
-Missing phone:        200
-Missing socials:      124
-Missing state:        103
-Missing logo:         69
+Total rows:             1001
+Duplicate domains:      0
+Invalid domains:        0
+Invalid states:         0
+Favicon/Bad logos:      0
+Unclassified category:  167
+Missing category:       0
+Missing description:    70
+Missing email:          51
+Missing phone:          87
+Missing socials:        113
+Missing state:          7
+Missing logo:           58
 
 --- Summary Verification ---
-Candidate count:      2551
-Unique candidates:    2551
-Shopify verified:     1090
-India verified:       1024
-Final stores:         1001
-Email coverage:       83.7%
-Phone coverage:       80.1%
-Social coverage:      87.6%
-State coverage:       89.7%
+Candidate count:        2613
+Unique candidates:      2613
+Shopify verified:       1352
+India verified:         1023
+Final stores:           1001
+Email coverage:         94.9% (Actual: 94.9%)
+Phone coverage:         91.3% (Actual: 91.3%)
+Social coverage:        88.7% (Actual: 88.7%)
+State coverage:         99.3% (Actual: 99.3%)
+Logo coverage:          94.2% (Actual: 94.2%)
 
 [SUCCESS] Output data passed all strict validation checks!
 ============================================================
 ```
 
-### 2. Unit Test Suite (23 Passing Tests)
+### 2. Unit Test Suite (44 Passing Tests)
 ```bash
 pytest -v -q
 ```
-Runs 23 automated tests across 4 modules:
-- `tests/test_shopify.py`: Verifies positive Shopify detection, negative control cases (generic blogs, WordPress, WooCommerce), and signal weights.
-- `tests/test_india.py`: Verifies GSTIN state extraction, PIN codes, +91 phone numbers, payment gateway detection, and canonical state dictionary mapping.
-- `tests/test_extract.py`: Tests email sanitization (stripping image extensions), phone parsing, social profile link cleaning, and logo extraction heuristics.
-- `tests/test_utils.py`: Tests URL normalization, domain extraction, and duplicate handling.
+Runs 44 automated tests across 5 modules:
+- `tests/test_shopify.py`: Verifies primary technical detection, negative controls, and structural schema validation for `/products.json` and `/cart.json` endpoints.
+- `tests/test_india.py`: Verifies 5-tier state hierarchy (GSTIN $\to$ JSON-LD $\to$ Address State $\to$ PIN Code $\to$ City), shipping text exclusion, and mandatory strong location rule.
+- `tests/test_extract.py`: Tests email sanitization, placeholder email rejection (`@example.com`, `@company.com`), phone parsing, social profile link cleaning, and placeholder logo rejection.
+- `tests/test_pipeline_and_validator.py`: Tests storefront password/demo rejection, parked domain exclusion, and validator mismatch enforcement.
+- `tests/test_utils.py`: Tests domain normalization, subdomains preservation, and duplicate handling.
 
 ---
 
@@ -400,16 +403,16 @@ The pipeline was executed to collect the full 1,000+ verified store benchmark:
 ### Benchmark Telemetry
 | Metric | Value | Notes |
 |---|---|---|
-| **Candidates Discovered** | 2,551 | Multi-channel discovery across OnShopify & seeds |
-| **Shopify Verified** | 1,090 | 42.7% passed Shopify technical checks (score $\ge$ 5) |
-| **India Verified** | 1,024 | 93.9% of Shopify stores passed India checks (score $\ge$ 7) |
-| **Final Stores Saved** | **1,001** | Target met and exceeded |
-| **Email Coverage** | **83.7%** | Cleaned, deduplicated emails |
-| **Phone Coverage** | **80.1%** | E.164 normalized Indian phone numbers |
-| **Socials Coverage** | **87.6%** | Direct profile URLs across 6 major platforms |
-| **State Coverage** | **89.7%** | Canonical Indian State or Union Territory |
-| **Logo Coverage** | **93.1%** | Verified brand logos (favicons rejected) |
-| **Total Runtime** | **3,244.67s** (~54 minutes) | Average ~0.3 stores/sec including internal page crawling |
+| **Candidates Discovered** | 2,613 | Multi-source discovery across OnShopify & candidate seeds |
+| **Shopify Verified** | 1,352 | 51.7% passed multi-signal Shopify technical checks |
+| **India Verified** | 1,023 | 75.7% of Shopify stores passed strict location verification |
+| **Final Stores Saved** | **1,001** | Target met and exceeded (100% verified authentic) |
+| **Email Coverage** | **94.9%** | Cleaned, deduplicated emails (placeholders excluded) |
+| **Phone Coverage** | **91.3%** | E.164 normalized Indian phone numbers |
+| **Socials Coverage** | **88.7%** | Direct profile URLs across 6 major platforms |
+| **State Coverage** | **99.3%** | Canonical Indian State or Union Territory (5-tier hierarchy) |
+| **Logo Coverage** | **94.2%** | Verified brand logos (favicons rejected) |
+| **Total Runtime** | **6,787.39s** (~113 minutes) | Polite domain throttling & deep internal link crawling |
 | **Memory Footprint** | **< 150 MB** | Asynchronous streaming, low RAM overhead |
 
 ---
