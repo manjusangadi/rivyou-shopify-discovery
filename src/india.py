@@ -280,6 +280,34 @@ class IndiaVerifier:
         prefix2 = pin[:2]
         return PIN_PREFIX_TO_STATE.get(prefix2)
 
+    def _validate_gstin(self, candidate: str) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Validates a candidate GSTIN string:
+        - Must be exactly 15 characters matching standard Indian GSTIN structure.
+        - First 2 digits must map to a valid Indian state/UT code in GST_STATE_CODES.
+        - Filters out known dummy/placeholder sequences.
+        Returns: (is_valid, state_name, state_code)
+        """
+        if not candidate or len(candidate) != 15:
+            return False, None, None
+
+        cand_upper = candidate.strip().upper()
+        # Standard structure: 2 digits + 5 letters (PAN) + 4 digits + 1 letter + 1 entity char + 'Z' + 1 check char
+        pattern = r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$"
+        if not re.match(pattern, cand_upper):
+            return False, None, None
+
+        st_code = cand_upper[:2]
+        gst_state = GST_STATE_CODES.get(st_code)
+        if not gst_state:
+            return False, None, None
+
+        # Filter out clearly invalid / dummy repeating sequences
+        if len(set(cand_upper)) <= 3:
+            return False, None, None
+
+        return True, gst_state, st_code
+
     def _is_shipping_text(self, text_snippet: str) -> bool:
         """Identifies text that merely mentions delivery/shipping destinations rather than office location."""
         lower = text_snippet.lower()
@@ -307,7 +335,7 @@ class IndiaVerifier:
                         address_blocks.append(t)
 
                 # 2. Specific class / id elements
-                for el in soup.find_all(attrs={"class": re.compile(r"(?:address|contact|footer|location|headquarter|office)", re.I)}):
+                for el in soup.find_all(True, class_=re.compile(r"(?:address|contact|footer|location|headquarter|office)", re.I)):
                     t = el.get_text(separator=" ", strip=True)
                     if 15 < len(t) < 800 and not self._is_shipping_text(t):
                         address_blocks.append(t)
@@ -349,16 +377,17 @@ class IndiaVerifier:
         # -------------------------------------------------------------
         # Hierarchy Tier 1: GSTIN Match & State Code (Highest Confidence)
         # -------------------------------------------------------------
-        gstin_match = re.search(r"\b([0-3][0-9])[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b", full_text)
-        if gstin_match:
-            st_code = gstin_match.group(1)
-            gst_state = GST_STATE_CODES.get(st_code)
-            score += 8
-            signals.append(f"gstin:{gstin_match.group(0)}")
-            strong_location_signals.append("gstin")
-            if gst_state:
-                state = gst_state
-                state_source = f"gstin_code_{st_code}"
+        for m in re.finditer(r"\b([0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][1-9A-Za-z][zZ][0-9A-Za-z])\b", full_text):
+            candidate = m.group(1).upper()
+            is_valid, gst_state, st_code = self._validate_gstin(candidate)
+            if is_valid and gst_state and st_code:
+                score += 8
+                signals.append(f"gstin:{candidate}")
+                strong_location_signals.append("gstin")
+                if not state:
+                    state = gst_state
+                    state_source = f"gstin_code_{st_code}"
+                break
 
         # -------------------------------------------------------------
         # Hierarchy Tier 2: JSON-LD Structured PostalAddress
@@ -404,12 +433,12 @@ class IndiaVerifier:
 
         if pin_match:
             pin_val = pin_match.group(1)
-            score += 5
-            signals.append(f"address_pin:{pin_val}")
-            strong_location_signals.append("address_pincode")
-            if not state:
-                derived_state = self._state_from_pin(pin_val)
-                if derived_state:
+            derived_state = self._state_from_pin(pin_val)
+            if derived_state and len(set(pin_val)) > 1 and pin_val != "123456":
+                score += 5
+                signals.append(f"address_pin:{pin_val}")
+                strong_location_signals.append("address_pincode")
+                if not state:
                     state = derived_state
                     state_source = f"pin_code_{pin_val}"
 
