@@ -44,3 +44,4 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 data/logos/*
+data/old-output/*
