@@ -126,3 +126,50 @@ def test_logo_extraction_rejects_favicon(extractor):
     logo_url = extractor.extract_logo("https://brand.in", html)
     assert "favicon" not in logo_url.lower()
     assert "logo_black.png" in logo_url
+
+
+def test_placeholder_email_rejection(extractor):
+    html = """
+    <html>
+    <body>
+      <p>Contact: support@example.com</p>
+      <p>Contact: info@domain.com</p>
+      <p>Contact: user@yourdomain.com</p>
+      <p>Contact: test@test.com</p>
+      <p>Real Contact: help@realbrand.in</p>
+    </body>
+    </html>
+    """
+    emails = extractor.extract_emails([html])
+    assert "help@realbrand.in" in emails
+    assert "support@example.com" not in emails
+    assert "info@domain.com" not in emails
+    assert "user@yourdomain.com" not in emails
+    assert "test@test.com" not in emails
+
+
+def test_placeholder_logo_rejection(extractor):
+    html = """
+    <html>
+    <body>
+      <header>
+        <img class="logo" src="//cdn.shopify.com/s/files/1/001/files/no-image-2048.png" alt="No image">
+      </header>
+    </body>
+    </html>
+    """
+    logo_url = extractor.extract_logo("https://brand.in", html)
+    assert logo_url == ""
+
+    html_valid = """
+    <html>
+    <body>
+      <header>
+        <img class="site-header__logo" src="//cdn.shopify.com/s/files/1/001/files/actual_brand_logo.svg" alt="Brand">
+      </header>
+    </body>
+    </html>
+    """
+    logo_valid = extractor.extract_logo("https://brand.in", html_valid)
+    assert "actual_brand_logo.svg" in logo_valid
+
