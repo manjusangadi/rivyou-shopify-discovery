@@ -36,6 +36,9 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["."]
+filterwarnings = [
+    "ignore::DeprecationWarning:dateutil.*:",
+]
 
 [tool.pyright]
 include = ["src", "tests", "scripts", "run.py"]
